@@ -622,7 +622,7 @@ Loads the file pointed to by FILENAME."
   (setq org-incoming--cur-source-original filename)
 
   (org-incoming--new-tempdir)
-  
+
   (unless (eq (org-incoming--get-setting "preprocessing-cmd") nil)
     (org-incoming--run-preprocessing))
 
@@ -847,7 +847,16 @@ by the plist DIR-PLIST."
         ;; *not* successfully load a file
         (null (org-incoming--next-in-dir dir)))
     ;; The fn of -each-while is empty, we got our work done in the predicate
-    (lambda (_dir))))
+    (lambda (_dir)
+      (progn (when (window-live-p org-incoming--query-win)
+        (set-window-dedicated-p org-incoming--query-win nil))
+      (when (buffer-live-p org-incoming--query-buf)
+        (kill-buffer org-incoming--query-buf))
+      (when (buffer-live-p org-incoming--pdf-buf)
+        (kill-buffer org-incoming--pdf-buf))
+      (when (buffer-live-p org-incoming--org-buf)
+        (kill-buffer org-incoming--org-buf))
+      (delete-other-windows)))))
 
 (defun org-incoming--windows-for-query ()
   "Set up the windows and buffers of the active frame for the query phase."
