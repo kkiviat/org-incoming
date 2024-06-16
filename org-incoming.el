@@ -67,6 +67,8 @@
   "Text extracted from the PDF currently being processed.")
 (defvar org-incoming--w-name nil "The current title form widget.")
 (defvar org-incoming--w-date nil "The current date form widget.")
+(defvar org-incoming--w-id nil "The current id form widget.")
+(defvar org-incoming--w-keywords nil "The current keywords form widget.")
 
 (defvar org-incoming--cur-source nil
   "The source filename for the currently processed PDF.
@@ -123,7 +125,7 @@ ${src} - The full path to the source PDF file
 ${dst} - Full path to a (not yet existing) target file name
 
 The shell command must not modify the source file pointed to by
-'src', and produce a (possibly modified) file at 'dst'.
+\\='src\\=', and produce a (possibly modified) file at \\='dst\\='.
 
 Note that the original file will NOT be stored, but only the
 preprocessed file will be moved into the target PDF directory."
@@ -298,7 +300,7 @@ A sanitized name does not contain any problematic characters."
     ;; (nonexistent) directory will fail. To avoid this, we just change into the
     ;; current temporary directory here.
     (cd org-incoming--cur-tempdir)
-     
+
     (message "Executing %s" formatted-cmd)
     (shell-command formatted-cmd output-buf output-buf)
 
@@ -452,6 +454,8 @@ Should not be set manually."
     (error "Current state not allowed for org-incoming--validate-form"))
   (let ((title-err (widget-apply org-incoming--w-name :validate))
         (date-err (widget-apply org-incoming--w-date :validate))
+        (id-err (widget-apply org-incoming--w-id :validate))
+        (keywords-err (widget-apply org-incoming--w-keywords :validate))
         (errmsg nil)
         (form-invalid nil))
     (unless (null title-err)
@@ -462,6 +466,14 @@ Should not be set manually."
       (message (widget-get date-err :error))
       (setq errmsg (widget-get date-err :error))
       (setq form-invalid 't))
+    (unless (null id-err)
+      (message (widget-get id-err :error))
+      (setq errmsg (widget-get id-err :error))
+      (setq form-invalid 't))
+    (unless (null keywords-err)
+      (message (widget-get keywords-err :error))
+      (setq errmsg (widget-get keywords-err :error))
+      (setq form-invalid 't))
 
     (when form-invalid
       (set-buffer org-incoming--query-buf)
@@ -469,6 +481,18 @@ Should not be set manually."
       (widget-insert (format "%s\n" errmsg)))
 
     form-invalid))
+
+(defun org-incoming--guess-keywords (fname)
+  "Guess the keywords from the filename FNAME."
+  (let ((regexp ".*\\[\\(.+\\)\\].*"))
+    (if (string-match regexp fname) (match-string 1 fname) "")))
+
+(defun org-incoming--guess-id (fname)
+  "Guess an id from the filename FNAME."
+  (replace-regexp-in-string
+    " \\[.*\\]"
+    ""
+    (replace-regexp-in-string "\\." "" (file-name-base fname))))
 
 (defun org-incoming--guess-date (fname)
   "Guess a date from the filename FNAME.
@@ -507,7 +531,10 @@ This uses the `parse-date-pattern' and `parse-date-re' settings."
 
 This initializes the form for the PDF file at FILENAME."
   (let ((inhibit-read-only t)
-        (guessed-date (org-incoming--guess-date filename)))
+        (guessed-date (org-incoming--guess-date filename))
+        (guessed-id (org-incoming--guess-id filename))
+        (guessed-keywords (org-incoming--guess-keywords filename))
+        )
     (when (or (not (boundp 'org-incoming--query-buf))
               (not (buffer-live-p org-incoming--query-buf)))
       (setq org-incoming--query-buf (get-buffer-create "*org-incoming-query*")))
@@ -525,6 +552,14 @@ This initializes the form for the PDF file at FILENAME."
     (setq org-incoming--w-date (widget-create 'org-incoming--datewidget
                                               :size 10
                                               :value guessed-date))
+    (widget-insert "\nID: ")
+    (setq org-incoming--w-id (widget-create 'editable-field
+                                              :size 10
+                                              :value guessed-id))
+    (widget-insert "\nkeywords: ")
+    (setq org-incoming--w-keywords (widget-create 'editable-field
+                                              :size 20
+                                              :value guessed-keywords))
     (widget-insert "\n \n")
     (widget-setup)
     (goto-char 0)
@@ -568,7 +603,6 @@ This initializes the form for the PDF file at FILENAME."
       ;; contains the path to the temporary, preprocessed file. We moved that
       ;; to the target, thus we can now delete the original.
       (delete-file org-incoming--cur-source-original 't))
-      
 
     (setq org-incoming--cur-phase 'stored)
     (org-incoming--next)))
@@ -628,17 +662,19 @@ This extracts text from the PDF file at FNAME and sets the variable
     (file-missing (message "pdftotext not found. Install pdftotext to enable \
 text extraction."))))
 
-(defun org-incoming--create-org-file (cur-name cur-date)
+(defun org-incoming--create-org-file (cur-name cur-date cur-id cur-keywords)
   "Create a new org file template for annotation.
 
-Sets title and date from CUR-NAME and CUR-DATE."
+Sets title and date and id from CUR-NAME, CUR-DATE, CUR-ID, CUR-KEYWORDS."
   (let* ((context `(("date" . ,cur-date)
                     ("title" . ,cur-name)
-                    ("link" . ,org-incoming--cur-pdf-target)
+                    ("id" . ,cur-id)
+                    ("keywords" . ,cur-keywords)
+                    ("link" . ,(concat "./" (file-relative-name org-incoming--cur-pdf-target org-incoming--cur-targetdir)))
                     ("extracted" . ,org-incoming--cur-extracted)))
          (content (s-format (org-incoming--get-setting "annotation-template")
                             'aget context)))
-    
+
     (with-temp-buffer
       (insert content)
       (write-file org-incoming--cur-annotation-file))))
@@ -663,7 +699,7 @@ Sets title and date from CUR-NAME and CUR-DATE."
 
     (goto-char length-before-dummy)
     (setq drawer-begin (- (search-forward ":") 2))
-    
+
     (setq id-drawer-text
           (substring (buffer-string) drawer-begin))
     (delete-region length-before-dummy (point-max))
@@ -671,21 +707,21 @@ Sets title and date from CUR-NAME and CUR-DATE."
     ;; Text from below the headline had some indentation, remove that
     (insert (replace-regexp-in-string " *:" ":" id-drawer-text))
     (goto-char (point-max)))
-    
+
   (save-buffer)
   (kill-buffer org-incoming--temp-buf))
 
 
-(defun org-incoming--annotate (cur-name cur-date)
+(defun org-incoming--annotate (cur-name cur-date cur-id cur-keywords)
   "Initialize the annotation phase.
 
-Sets title and date from CUR-NAME and CUR-DATE."
+Sets title, date, id, kw from CUR-NAME, CUR-DATE, CUR-ID, CUR-KEYWORDS."
   (unless (eq org-incoming--cur-phase 'named)
     (error "Current state not allowed for org-incoming--annotate"))
 
   (org-incoming--extract-text org-incoming--cur-source)
-  (org-incoming--create-org-file cur-name cur-date)
-  
+  (org-incoming--create-org-file cur-name cur-date cur-id cur-keywords)
+
   (unless (null (org-incoming--get-setting "use-roam"))
     (org-incoming--create-roam-file))
 
@@ -701,14 +737,19 @@ Sets title and date from CUR-NAME and CUR-DATE."
   (save-buffer)
   (setq org-incoming--cur-phase 'annotated))
 
-(defun org-incoming--set-filenames (cur-name cur-date)
-  "Set the destination filename variables based on CUR-NAME and CUR-DATE."
+(defun org-incoming--set-filenames (cur-name cur-id cur-keywords)
+  "Set the destination filename variables.
+
+ Based on CUR-NAME and CUR-ID and CUR-KEYWORDS."
   (let* ((filename (org-incoming--sanitize-filename
-                    (replace-regexp-in-string " " "_" (string-trim cur-name))))
-         (target-filename-base (format "%s_%s.org" cur-date filename))
+                    (replace-regexp-in-string " " "-" (string-trim cur-name))))
+         (keywords (replace-regexp-in-string " " "_" cur-keywords))
+         (has-kw (not (string= "" keywords)))
+         (keyword-suffix (if has-kw (concat "__" keywords) ""))
+         (target-filename-base (format "%s--%s%s.org" cur-id filename keyword-suffix))
          (target-filename (org-incoming--find-free-filename
                            org-incoming--cur-targetdir target-filename-base))
-         (target-pdfname-base (format "%s_%s.pdf" cur-date filename))
+         (target-pdfname-base (format "%s--%s%s.pdf" cur-id filename keyword-suffix))
          (target-pdfname (org-incoming--find-free-filename
                           org-incoming--cur-targetdir-pdf target-pdfname-base)))
 
@@ -732,18 +773,24 @@ Sets title and date from CUR-NAME and CUR-DATE."
       (throw 'myexit "exiting"))
 
     (let* ((cur-name (string-trim (widget-value org-incoming--w-name)))
+           (cur-id (string-trim (widget-value org-incoming--w-id)))
            (cur-date (string-trim (widget-value org-incoming--w-date)))
+           (cur-keywords (string-trim (widget-value org-incoming--w-keywords)))
            (inhibit-read-only t))
 
-      (org-incoming--set-filenames cur-name cur-date)
+      (org-incoming--set-filenames cur-name cur-id cur-keywords)
 
       (widget-delete org-incoming--w-name)
+      (widget-delete org-incoming--w-id)
       (widget-delete org-incoming--w-date)
+      (widget-delete org-incoming--w-keywords)
       (setq org-incoming--w-name nil)
       (setq org-incoming--w-date nil)
+      (setq org-incoming--w-id nil)
+      (setq org-incoming--w-keywords nil)
 
       (setq org-incoming--cur-phase 'named)
-      (org-incoming--annotate cur-name cur-date))))
+      (org-incoming--annotate cur-name cur-date cur-id cur-keywords))))
 
 (defun org-incoming--get-files-in-srcdir (sourcedir)
   "Return the PDF files in SOURCEDIR."
