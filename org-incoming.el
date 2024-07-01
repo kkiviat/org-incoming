@@ -669,7 +669,7 @@ Sets title and date and id from CUR-NAME, CUR-DATE, CUR-ID, CUR-KEYWORDS."
   (let* ((context `(("date" . ,cur-date)
                     ("title" . ,cur-name)
                     ("id" . ,cur-id)
-                    ("keywords" . ,cur-keywords)
+                    ("keywords" . ,(concat ":" (replace-regexp-in-string " " ":" cur-keywords) ":"))
                     ("link" . ,(concat "./" (file-relative-name org-incoming--cur-pdf-target org-incoming--cur-targetdir)))
                     ("extracted" . ,org-incoming--cur-extracted)))
          (content (s-format (org-incoming--get-setting "annotation-template")
